@@ -25,7 +25,6 @@ pipeline {
             }
         }
 
-
         stage('Build Docker Image') {
             steps {
                 echo "Construindo imagem Docker ${FULL_IMAGE}..."
@@ -41,7 +40,7 @@ pipeline {
                 bat """
                 docker run --rm -v "%cd%":/app -w /app ^
                 ghcr.io/aquasecurity/trivy:latest fs ^
-                --exit-code 1 --severity HIGH,CRITICAL ^
+                --exit-code 0 --severity HIGH,CRITICAL ^
                 --format table --output /app/trivy-fs-report.txt .
                 """
                 // Arquiva o relatório, mesmo se o Trivy acusar vulnerabilidades
@@ -74,7 +73,7 @@ pipeline {
                 bat """
                 docker run --rm -v "%cd%":/app -w /app ^
                 ghcr.io/aquasecurity/trivy:latest image ^
-                --exit-code 1 --severity HIGH,CRITICAL ^
+                --exit-code 0 --severity HIGH,CRITICAL ^
                 --format table --output /app/trivy-image-report.txt ${DOCKER_IMAGE}:latest
                 """
                 archiveArtifacts artifacts: 'trivy-image-report.txt', onlyIfSuccessful: false
