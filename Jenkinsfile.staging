@@ -1,35 +1,89 @@
 pipeline {
-  agent any
+    agent any
 
-  stages {
-    stage('Checkout') {
-      steps {
-        checkout scm
-      }
+    environment {
+        // Ajuste se o nome da imagem for outro
+        DOCKER_IMAGE = 'adrianoliv/projeto'
+        DOCKER_TAG   = "build-${env.BUILD_NUMBER}"
+        FULL_IMAGE   = "${DOCKER_IMAGE}:${DOCKER_TAG}"
     }
 
-    stage('Start container') {
-      steps {
-        echo 'Starting container from Docker Hub...'
-        bat 'docker-compose -f docker-compose.staging.yml pull' // Baixa a imagem do Docker Hub
-        bat 'docker-compose -f docker-compose.staging.yml up -d --no-color'
-        sleep time: 60, unit: 'SECONDS' // Aumenta o tempo para o serviço Spring Boot iniciar
-        bat 'docker-compose -f docker-compose.staging.yml logs' // Verifica os logs para conferir o status do Spring Boot
-        bat 'docker-compose -f docker-compose.staging.yml ps' // Verifica o status do container
-      }
-    }
+    stages {
 
-    stage('Run tests against the container') {
-      steps {
-        bat 'curl http://localhost:8686 || echo "Service not responding"'
-      }
-    }
-  }
+        stage('Checkout') {
+            steps {
+                echo 'Fazendo checkout do código...'
+                checkout scm
+            }
+        }
 
-  post {
-    always {
-      echo 'Pipeline completed'
-      // Não derruba mais o container aqui
-    }
-  }
-}
+        stage('Build & Test (Maven)') {
+            steps {
+                echo 'Compilando o projeto e executando testes com Maven...'
+                // Wrapper do Maven no Windows
+                bat 'mvnw.cmd clean package -DskipTests=false'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo "Construindo imagem Docker ${FULL_IMAGE}..."
+                bat "docker build -t ${FULL_IMAGE} ."
+            }
+        }
+
+        stage('Security Scan - Filesystem (Trivy via Docker)') {
+            steps {
+                echo 'Executando Trivy (filesystem) usando Docker...'
+                // Monta o workspace atual (%cd%) dentro do container em /app
+                // e gera o report em /app, que é o diretório do host
+                bat """
+                docker run --rm -v "%cd%":/app -w /app ^
+                ghcr.io/aquasecurity/trivy:latest fs ^
+                --exit-code 1 --severity HIGH,CRITICAL ^
+                --format table --output /app/trivy-fs-report.txt .
+                """
+                // Arquiva o relatório, mesmo se o Trivy acusar vulnerabilidades
+                archiveArtifacts artifacts: 'trivy-fs-report.txt', onlyIfSuccessful: false
+            }
+        }
+
+        stage('Docker Login & Push') {
+            steps {
+                echo "Realizando push da imagem ${FULL_IMAGE} e da tag latest..."
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'DOCKERHUB_CRED',   // <-- ID da credencial no Jenkins
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+                    bat 'docker login -u %DOCKER_USER% -p %DOCKER_PASS%'
+                    bat "docker tag ${FULL_IMAGE} ${DOCKER_IMAGE}:latest"
+                    bat "docker push ${FULL_IMAGE}"
+                    bat "docker push ${DOCKER_IMAGE}:latest"
+                }
+            }
+        }
+
+        stage('Security Scan - Image (Trivy via Docker)') {
+            steps {
+                echo "Executando Trivy (image) na imagem ${DOCKER_IMAGE}:latest usando Docker..."
+                // Aqui o Trivy roda dentro de um container e acessa a imagem no Docker Hub
+                bat """
+                docker run --rm -v "%cd%":/app -w /app ^
+                ghcr.io/aquasecurity/trivy:latest image ^
+                --exit-code 1 --severity HIGH,CRITICAL ^
+                --format table --output /app/trivy-image-report.txt ${DOCKER_IMAGE}:latest
+                """
+                archiveArtifacts artifacts: 'trivy-image-report.txt', onlyIfSuccessful: false
+            }
+        }
+
+        stage('Deploy Staging') {
+            steps {
+                echo 'Subindo containers no ambiente de STAGING...'
+                // Atualiza imagem e sobe stack do docker-compose.staging.yml
+                bat 'docker-compose -f docker-compose.staging.yml pull'
+                bat 'docker-compose -f docker-compose.staging.yml up -d --no-color'
+                echo 'Aguardando
