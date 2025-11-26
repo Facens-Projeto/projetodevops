@@ -20,10 +20,11 @@ pipeline {
         stage('Build & Test (Maven)') {
             steps {
                 echo 'Compilando o projeto e executando testes com Maven...'
-                // Wrapper do Maven no Windows
-                bat 'mvnw.cmd clean package -DskipTests=false'
+                // Usa o Maven instalado no servidor (sem wrapper)
+                bat 'mvn clean package -DskipTests=false'
             }
         }
+
 
         stage('Build Docker Image') {
             steps {
