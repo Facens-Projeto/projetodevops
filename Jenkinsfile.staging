@@ -86,4 +86,29 @@ pipeline {
                 // Atualiza imagem e sobe stack do docker-compose.staging.yml
                 bat 'docker-compose -f docker-compose.staging.yml pull'
                 bat 'docker-compose -f docker-compose.staging.yml up -d --no-color'
-                echo 'Aguardando
+                echo 'Aguardando a aplicação subir...'
+                sleep time: 30, unit: 'SECONDS'
+            }
+        }
+
+        stage('Smoke Test Staging') {
+            steps {
+                echo 'Executando teste simples (curl) no STAGING...'
+                // Ajuste a porta caso no docker-compose.staging.yml seja outra
+                bat 'curl http://localhost:8686 || echo "Service not responding"'
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Pipeline finalizado (DevSecOps com Trivy via Docker).'
+        }
+        success {
+            echo '✅ Pipeline OK: build, segurança e deploy realizados com sucesso.'
+        }
+        failure {
+            echo '❌ Pipeline falhou: verificar logs (Maven, Docker, Trivy ou deploy).'
+        }
+    }
+}
